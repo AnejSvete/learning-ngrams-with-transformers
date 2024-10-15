@@ -14,7 +14,6 @@ class NgramLM:
         n: Optional[int] = None,
         alphabet: Optional[str] = None,
         mean_length: float = 10,
-        method: str = "one-hot",
         rank: int = 1,
         D: int = 8,
         filename: Optional[str] = None,
@@ -28,13 +27,6 @@ class NgramLM:
                 Defaults to None.
             mean_length (float, optional): The target mean length of the strings
                 to generate.
-            method (str, optional): The method to use for representing the model.
-                Can be 'one-hot' or 'log', 'rank', or 'vectorial'.
-                'one-hot' builds a `|Σ| x |Σ|(n - 1)` matrix of probabilities, 'log'
-                builds a `|Σ| x log(|Σ|)(n - 1)` matrix, and 'rank' builds a
-                `|Σ| x |Σ|^{n-1}` matrix of rank r. 'vectorial' builds a
-                `|Σ| x (n - 1)D` matrix of rank `D`.
-                Defaults to 'one-hot'.
             filename (Optional[str], optional): Filename of an existing model to read.
                 Defaults to None.
             seed (Optional[int], optional): The seed of the random generation.
@@ -44,40 +36,20 @@ class NgramLM:
         if filename is not None:
             self.load(filename)
         else:
-            assert method in ["one-hot", "log", "rank", "vectorial"], "Invalid method"
             self.n = n
             self.alphabet = list(alphabet)
             self.EOSalphabet = list(set(self.alphabet + ["</s>"]))
             self.BOSalphabet = list(set(self.alphabet + ["<s>"]))
             self.BOSEOSalphabet = list(set(self.alphabet + ["<s>", "</s>"]))
             self.mean_length = mean_length
-            self.method = method
             self.rank = rank
             self.D = D
             self.rng = np.random.default_rng(seed)
             self.p = dict()
             self.setup()
 
-    def _construct_E(self, D: int) -> np.ndarray:
-        E = self.rng.normal(size=(len(self.EOSalphabet), D))
-        return E
-
-    def _construct_one_hot_matrix(self):
-        self.E = self._construct_E(len(self.BOSalphabet) * (self.n - 1))
-
-    def construct_log_matrix(self):
-        self.E = self._construct_E(
-            (int(np.ceil(np.log2(len(self.BOSalphabet))))) * (self.n - 1)
-        )
-
-    def construct_rank_matrix(self):
-        self.E1 = np.abs(self.rng.normal(size=(len(self.BOSalphabet), self.rank)))
-        self.E2 = self.rng.normal(
-            size=(self.rank, len(self.EOSalphabet) ** (self.n - 1))
-        )
-
     def construct_vector_matrix(self):
-        self.E1 = np.abs(self.rng.normal(size=(len(self.BOSalphabet), self.rank)))
+        self.E1 = self.rng.normal(size=(len(self.BOSalphabet), self.rank))
         self.E2 = self.rng.normal(size=(self.rank, self.D * (self.n - 1)))
 
     def _setup_encoding(self):
@@ -88,48 +60,14 @@ class NgramLM:
         self.idx2sym = {s: i for i, s in enumerate(self.BOSEOSalphabet)}
         self.sym2idx = {i: s for s, i in self.idx2sym.items()}
         self.sym2vec = {s: self.rng.normal(size=(self.D,)) for s in self.BOSalphabet}
-        if self.method == "rank":
-            self.ngram2idx = {
-                ngram: i
-                for i, ngram in enumerate(product(self.BOSalphabet, repeat=self.n - 1))
-            }
-        if self.method == "log":
-            G = int(np.ceil(np.log2(len(self.BOSEOSalphabet))))
-            self.idx2bin = {
-                idx: [int(b) for b in np.binary_repr(int(idx), G)]
-                for idx in self.idx2sym
-            }
 
     def encoding(self, ngram: str) -> np.ndarray:
-        if self.method == "one-hot":
-            enc = np.zeros((len(self.BOSalphabet), self.n - 1))
-            ixs = [self.in_sym2idx[a] for a in ngram]
-            enc[ixs, np.arange(self.n - 1)] = 1
-            enc = enc.flatten()
-        elif self.method == "log":
-            enc = np.asarray(
-                [self.idx2bin[self.in_sym2idx[a]] for a in ngram]
-            ).flatten()
-        elif self.method == "rank":
-            enc = np.zeros(len(self.BOSalphabet) ** (self.n - 1))
-            enc[self.ngram2idx[ngram]] = 1
-        elif self.method == "vectorial":
-            enc = np.concatenate([self.sym2vec[s] for s in ngram])
+        enc = np.concatenate([self.sym2vec[s] for s in ngram])
 
         return enc
 
     def setup(self):
-        if self.method == "one-hot":
-            self._construct_one_hot_matrix()
-        elif self.method == "log":
-            self.construct_log_matrix()
-        elif self.method == "rank":
-            self.construct_rank_matrix()
-        elif self.method == "vectorial":
-            self.construct_vector_matrix()
-        else:
-            raise ValueError("Invalid method")
-
+        self.construct_vector_matrix()
         self._setup_encoding()
 
     def to_dict(self):
@@ -143,10 +81,7 @@ class NgramLM:
     def p_cond(self, a: str, ngram: Sequence[str]) -> float:
         if ngram not in self.p:
             enc = self.encoding(ngram)
-            if self.method in ["rank", "vectorial"]:
-                logits = self.E1 @ (self.E2 @ enc)
-            else:
-                logits = self.E @ enc
+            logits = self.E1 @ (self.E2 @ enc)
             logits[self.out_sym2idx["</s>"]] = -np.inf
             p_ngram = softmax(logits)
             p_ngram[self.out_sym2idx["</s>"]] = 1 / (self.mean_length - 1)
@@ -158,18 +93,6 @@ class NgramLM:
             else:
                 return p_ngram[self.out_sym2idx[a]]
         return self.p[ngram][a]
-
-    # def p_cond(self, a: str, ngram: Sequence[str]) -> float:
-    #     enc = self.encoding(ngram)
-    #     if self.method in ["rank", "vectorial"]:
-    #         logits = self.E1 @ (self.E2 @ enc)
-    #     else:
-    #         logits = self.E @ enc
-    #     logits[self.out_sym2idx["</s>"]] = -np.inf
-    #     p_ngram = softmax(logits)
-    #     p_ngram[self.out_sym2idx["</s>"]] = 1 / (self.mean_length - 1)
-    #     p_ngram = p_ngram / (1 + 1 / (self.mean_length - 1))
-    #     return p_ngram[self.out_sym2idx[a]]
 
     def logprob(self, y: Union[str, List[str]]) -> float:
         """Evaluates the log probability of a single string.
@@ -240,7 +163,6 @@ class NgramLM:
             "alphabet": self.alphabet,
             "rank": self.rank,
             "D": self.D,
-            "method": self.method,
             "mean_length": self.mean_length,
             "in_sym2idx": self.in_sym2idx,
             "in_idx2sym": self.in_idx2sym,
@@ -252,13 +174,7 @@ class NgramLM:
             "BOSalphabet": self.BOSalphabet,
         }
 
-        if self.method in ["rank", "vectorial"]:
-            data.update({"E1": self.E1, "E2": self.E2})
-        else:
-            data.update({"E": self.E})
-
-        if self.method == "rank":
-            data.update({"ngram2idx": self.ngram2idx})
+        data.update({"E1": self.E1, "E2": self.E2})
 
         with open(filename, "wb") as f:
             pickle.dump(data, f)
@@ -271,22 +187,14 @@ class NgramLM:
             self.alphabet = data["alphabet"]
             self.rank = data["rank"]
             self.D = data["D"]
-            self.method = data["method"]
             self.in_sym2idx = data["in_sym2idx"]
             self.in_idx2sym = data["in_idx2sym"]
             self.out_sym2idx = data["out_sym2idx"]
             self.out_idx2sym = data["out_idx2sym"]
-            # self.mean_length = data["mean_length"]
             self.sym2idx = data["sym2idx"]
             self.idx2sym = data["idx2sym"]
             self.EOSalphabet = data["EOSalphabet"]
             self.BOSalphabet = data["BOSalphabet"]
 
-            if self.method in ["rank", "vectorial"]:
-                self.E = data["E"]
-            else:
-                self.E1 = data["E1"]
-                self.E2 = data["E2"]
-
-            if self.method == "rank":
-                self.ngram2idx = data["ngram2idx"]
+            self.E1 = data["E1"]
+            self.E2 = data["E2"]

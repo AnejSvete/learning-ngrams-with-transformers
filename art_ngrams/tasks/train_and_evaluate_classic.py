@@ -19,7 +19,6 @@ from art_ngrams.estimation.classic import (
     WittenBellEstimator,
 )
 from art_ngrams.evaluation import metrics
-from art_ngrams.utils import utils
 
 method_name_to_estimator = {
     "MLE": MLEEstimator,
@@ -163,12 +162,11 @@ def evaluate_classic_methods(
 
 
 def save_results(
-    base_results_dir: str,
+    output: str,
     scores: Dict[str, float],
     n: int,
     n_hat: int,
     N_sym: int,
-    method: str,
     D: int,
     rank: int,
     mean_length: int,
@@ -178,33 +176,27 @@ def save_results(
     print("Saving results...")
 
     results_dir = path.join(
-        base_results_dir,
-        f"classic_n{n}_nh{n_hat}_ns{N_sym}_m{method}_D{D}_r{rank}_ml{mean_length}"
-        f"_s{seed}/",
+        output,
+        f"classic_n{n}_nh{n_hat}_ns{N_sym}_D{D}_r{rank}_ml{mean_length}_s{seed}/",
     )
 
     os.makedirs(results_dir, exist_ok=True)
 
-    with open(path.join(results_dir, "classic_results_rep.pickle"), "wb") as f:
-        pickle.dump(scores, f)
+    results = {
+        "scores": scores,
+        "n": n,
+        "n_hat": n_hat,
+        "N_sym": N_sym,
+        "D": D,
+        "rank": rank,
+        "mean_length": mean_length,
+        "seed": seed,
+    }
+
+    with open(path.join(results_dir, "results.pickle"), "wb") as f:
+        pickle.dump(results, f)
 
     print("Done saving results.")
-
-
-def get_n_hat_range(n: int) -> List[int]:
-
-    if n == 2:
-        n_hat_range = []
-    elif n == 4:
-        n_hat_range = [8]
-    elif n == 6:
-        n_hat_range = [12]
-    elif n == 8:
-        n_hat_range = [16]
-    elif n == 12:
-        n_hat_range = [18, 20]
-
-    return n_hat_range
 
 
 @hydra.main(
@@ -220,38 +212,25 @@ def main(cfg: DictConfig):
     rank_range = cfg.dataset.rank_range
     N_train = cfg.dataset.N_train
     mean_length = cfg.dataset.mean_length
-    method = cfg.dataset.method
-    representation_dataset = cfg.dataset.representation_dataset
 
-    base_data_dir = cfg.dataset.base_data_dir
-    base_results_dir = cfg.dataset.base_results_dir
+    input = cfg.dataset.input
+    output = cfg.dataset.output
 
     wandb.init(project="artificial-ngrams-classic-representation")
 
     for n, N_sym, D, rank in product(n_range, N_sym_range, D_range, rank_range):
-        if representation_dataset:
-            data_dirs = utils.find_matching_directories(
-                base_dir=base_data_dir,
-                n=n,
-                N_sym=N_sym,
-                N_train=N_train,
-                mean_length=mean_length,
-                method=method,
-                rank=rank,
-                D=D,
-                representation=True,
-            )
-        else:
-            data_dirs = utils.find_matching_directories(
-                base_dir=base_data_dir,
-                n=n,
-                N_sym=N_sym,
-                N_train=N_train,
-                N_test=30000,
-                mean_length=mean_length,
-            )
+        data_dirs = utils.find_matching_directories(  # TODO
+            base_dir=input,
+            n=n,
+            N_sym=N_sym,
+            N_train=N_train,
+            mean_length=mean_length,
+            rank=rank,
+            D=D,
+            representation=True,
+        )
 
-        n_hat_range = get_n_hat_range(n)
+        n_hat_range = [n]
 
         for n_hat in n_hat_range:
             print(
@@ -268,12 +247,11 @@ def main(cfg: DictConfig):
                 )
 
                 save_results(
-                    base_results_dir,
+                    output,
                     scores,
                     n,
                     n_hat,
                     N_sym,
-                    method,
                     D,
                     rank,
                     mean_length,

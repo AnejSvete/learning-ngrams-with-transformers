@@ -1,0 +1,10 @@
+dataset:
+  n: 5
+  N_sym: 128
+  N_train: 10000
+  N_test: 10000
+  mean_length: 50
+  D: 16
+  rank: 16
+  seed: 42
+  output: /Users/anej/data/artificial_ngrams/datasets/
