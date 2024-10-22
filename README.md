@@ -14,3 +14,12 @@ Then install the package (in the required package) in editable mode:
 $ pip install -e .
 ```
 We use pytest to unit test the code.
+
+
+## Generating the data
+
+1. Set the configuration file `dataset_generation.yaml` in the `config` directory to specify the parameters for the dataset generation including the output directory.
+2. Run the following command from the base directory of the repository to generate the dataset:
+```bash
+$ bash ./scripts/generate_datasets.sh    
+```
