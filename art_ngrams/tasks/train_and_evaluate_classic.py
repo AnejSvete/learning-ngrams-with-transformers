@@ -202,7 +202,7 @@ def save_results(
 @hydra.main(
     version_base=None,
     config_path="../config",
-    config_name="classic_estimation_config_representation",
+    config_name="classic_estimation",
 )
 def main(cfg: DictConfig):
 
